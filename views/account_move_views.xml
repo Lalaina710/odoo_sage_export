@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Badge on account.move form -->
+    <record id="view_move_form_sage_export" model="ir.ui.view">
+        <field name="name">account.move.form.sage.export</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_move_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <field name="sage_exported" invisible="1"/>
+                <div class="badge rounded-pill text-bg-success float-end"
+                     invisible="not sage_exported">
+                    Exporté Sage
+                </div>
+            </xpath>
+            <xpath expr="//field[@name='date']" position="after">
+                <field name="sage_export_date" readonly="1"
+                       invisible="not sage_exported"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Filter on account.move list/search -->
+    <record id="view_account_move_filter_sage" model="ir.ui.view">
+        <field name="name">account.move.search.sage.export</field>
+        <field name="model">account.move</field>
+        <field name="inherit_id" ref="account.view_account_move_filter"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='posted']" position="after">
+                <separator/>
+                <filter string="Exporté vers Sage" name="sage_exported"
+                        domain="[('sage_exported', '=', True)]"/>
+                <filter string="Non exporté vers Sage" name="sage_not_exported"
+                        domain="[('sage_exported', '=', False)]"/>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>
