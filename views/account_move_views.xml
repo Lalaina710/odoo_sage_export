@@ -32,7 +32,7 @@
         <field name="inherit_id" ref="account.view_move_tree"/>
         <field name="arch" type="xml">
             <xpath expr="//field[@name='state']" position="before">
-                <field name="sage_exported" string="Export Sage" widget="boolean_toggle" readonly="1" optional="show"/>
+                <field name="sage_exported" string="Export Sage" optional="show"/>
             </xpath>
         </field>
     </record>
