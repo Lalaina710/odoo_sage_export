@@ -14,9 +14,13 @@
                     Exporté Sage
                 </div>
             </xpath>
-            <xpath expr="//field[@name='date']" position="after">
-                <field name="sage_export_date" readonly="1"
-                       invisible="not sage_exported"/>
+            <xpath expr="//div[@name='button_box']" position="after">
+                <div class="row" invisible="not sage_exported">
+                    <div class="col-auto">
+                        <label for="sage_export_date"/>
+                        <field name="sage_export_date" readonly="1"/>
+                    </div>
+                </div>
             </xpath>
         </field>
     </record>
