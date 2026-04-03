@@ -9,6 +9,7 @@ Module Odoo 18 pour exporter les écritures comptables validées vers un fichier
 - Gestion des **doublons** : les écritures exportées sont marquées et exclues des exports suivants
 - Option de **ré-export** pour inclure les écritures déjà exportées
 - Badge **"Exporté Sage"** visible sur chaque pièce comptable
+- Colonne **"Export Sage"** dans la liste des pièces comptables
 - Filtres de recherche : "Exporté vers Sage" / "Non exporté vers Sage"
 
 ## Format du fichier
@@ -62,6 +63,7 @@ Module Odoo 18 pour exporter les écritures comptables validées vers un fichier
 
 - Un badge vert **"Exporté Sage"** apparaît sur les pièces comptables exportées
 - La **date d'export** est affichée sur la fiche de la pièce
+- Une colonne **"Export Sage"** (case à cocher en lecture seule) est disponible dans la liste des pièces comptables — activez-la via le sélecteur de colonnes si elle n'est pas visible
 - Utiliser les filtres dans la liste des écritures :
   - **"Exporté vers Sage"** : voir les écritures déjà envoyées
   - **"Non exporté vers Sage"** : voir ce qui reste à exporter
