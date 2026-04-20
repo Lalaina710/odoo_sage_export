@@ -8,8 +8,12 @@ class AccountMove(models.Model):
         string='Exporté vers Sage',
         default=False,
         copy=False,
+        readonly=True,
+        groups='account.group_account_manager',
     )
     sage_export_date = fields.Datetime(
         string='Date export Sage',
         copy=False,
+        readonly=True,
+        groups='account.group_account_manager',
     )

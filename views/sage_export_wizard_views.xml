@@ -17,11 +17,22 @@
                     </group>
                 </group>
                 <group invisible="not export_file">
+                    <div class="alert alert-info" role="alert">
+                        <strong>Fichier prêt.</strong> Téléchargez le fichier puis cliquez sur
+                        <strong>Confirmer</strong> pour marquer les écritures comme exportées.
+                    </div>
                     <field name="export_file" filename="export_filename"/>
                     <field name="export_filename" invisible="1"/>
+                    <field name="export_count" string="Écritures"/>
                 </group>
                 <footer>
-                    <button name="action_export" string="Exporter" type="object" class="btn-primary"/>
+                    <button name="action_export" string="Exporter"
+                            type="object" class="btn-primary"
+                            invisible="export_file"/>
+                    <button name="action_confirm_export"
+                            string="Confirmer l'export"
+                            type="object" class="btn-success"
+                            invisible="not export_file"/>
                     <button string="Fermer" class="btn-secondary" special="cancel"/>
                 </footer>
             </form>

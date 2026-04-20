@@ -1,8 +1,11 @@
 import base64
+import logging
 from datetime import datetime
 
-from odoo import fields, models, _
+from odoo import api, fields, models, _
 from odoo.exceptions import UserError
+
+_logger = logging.getLogger(__name__)
 
 
 class SageExportWizard(models.TransientModel):
@@ -22,13 +25,30 @@ class SageExportWizard(models.TransientModel):
     )
     export_file = fields.Binary(string='Fichier', readonly=True)
     export_filename = fields.Char(string='Nom du fichier', readonly=True)
+    move_ids = fields.Many2many(
+        'account.move',
+        string='Ecritures exportées',
+        readonly=True,
+    )
+    export_count = fields.Integer(
+        string='Nombre écritures',
+        readonly=True,
+    )
+
+    @api.constrains('date_from', 'date_to')
+    def _check_dates(self):
+        for rec in self:
+            if rec.date_from and rec.date_to and rec.date_from > rec.date_to:
+                raise UserError(_('La date de début doit être antérieure à la date de fin.'))
 
     def _get_move_lines(self):
         """Retrieve account.move.lines to export."""
+        self.ensure_one()
         domain = [
             ('move_id.state', '=', 'posted'),
             ('date', '>=', self.date_from),
             ('date', '<=', self.date_to),
+            ('company_id', '=', self.env.company.id),
         ]
         if self.journal_ids:
             domain.append(('journal_id', 'in', self.journal_ids.ids))
@@ -78,7 +98,8 @@ class SageExportWizard(models.TransientModel):
         return ';'.join(fields_list)
 
     def action_export(self):
-        """Generate the Sage export file."""
+        """Generate the Sage export file (sans marquer les écritures)."""
+        self.ensure_one()
         lines = self._get_move_lines()
         if not lines:
             raise UserError(_('Aucune écriture à exporter pour la période et les journaux sélectionnés.'))
@@ -98,18 +119,21 @@ class SageExportWizard(models.TransientModel):
             self.date_to.strftime('%Y%m%d'),
         )
 
-        # Write file to wizard for download first
+        moves = lines.mapped('move_id')
+
+        # Write file to wizard — NE PAS marquer les écritures ici
         self.write({
             'export_file': base64.b64encode(file_data),
             'export_filename': filename,
+            'move_ids': [(6, 0, moves.ids)],
+            'export_count': len(moves),
         })
 
-        # Mark moves as exported only after file is ready
-        moves = lines.mapped('move_id')
-        moves.write({
-            'sage_exported': True,
-            'sage_export_date': fields.Datetime.now(),
-        })
+        _logger.info(
+            'Sage export genere: %d ecritures, %d lignes, periode %s-%s, user %s',
+            len(moves), len(lines), self.date_from, self.date_to,
+            self.env.user.login,
+        )
 
         return {
             'type': 'ir.actions.act_window',
@@ -117,4 +141,31 @@ class SageExportWizard(models.TransientModel):
             'res_id': self.id,
             'view_mode': 'form',
             'target': 'new',
+        }
+
+    def action_confirm_export(self):
+        """Marquer les écritures comme exportées APRES téléchargement."""
+        self.ensure_one()
+        if not self.move_ids:
+            raise UserError(_('Aucune écriture à confirmer. Lancez d\'abord l\'export.'))
+
+        self.move_ids.write({
+            'sage_exported': True,
+            'sage_export_date': fields.Datetime.now(),
+        })
+
+        _logger.info(
+            'Sage export confirme: %d ecritures marquees, user %s',
+            len(self.move_ids), self.env.user.login,
+        )
+
+        return {
+            'type': 'ir.actions.client',
+            'tag': 'display_notification',
+            'params': {
+                'title': _('Export confirmé'),
+                'message': _('%d écritures marquées comme exportées.') % len(self.move_ids),
+                'type': 'success',
+                'sticky': False,
+            },
         }
