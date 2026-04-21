@@ -80,6 +80,23 @@ class SageExportWizard(models.TransientModel):
             return line.partner_id.ref
         return ''
 
+    def _get_libelle(self, line):
+        """Construit le libellé Sage: type-N°FACTURE-NOM CLIENT."""
+        move = line.move_id
+        # Type de pièce
+        if move.move_type == 'out_refund':
+            prefix = 'avoir'
+        elif move.move_type == 'in_refund':
+            prefix = 'avoir-f'
+        elif move.move_type == 'in_invoice':
+            prefix = 'fact-f'
+        else:
+            prefix = 'fact'
+        # Nom client/fournisseur
+        partner_name = (move.partner_id.name or '').replace(';', ' ')
+        # Libellé: fact-G264398-NOVOTEL
+        return '%s-%s-%s' % (prefix, move.name or '', partner_name)
+
     def _format_line(self, line):
         """Format a single account.move.line as a Sage-compatible row."""
         move = line.move_id
@@ -89,7 +106,7 @@ class SageExportWizard(models.TransientModel):
             move.name or '',                           # N° Pièce
             line.account_id.code or '',                # Compte Général
             self._get_compte_tiers(line),              # Compte Tiers
-            (line.name or move.ref or '').replace(';', ' '),  # Libellé (escape ;)
+            self._get_libelle(line),                   # Libellé
             self._format_amount(line.debit),           # Débit
             self._format_amount(line.credit),          # Crédit
             (move.ref or '').replace(';', ' '),        # N° Référence
