@@ -22,6 +22,8 @@ class SageExportWizard(models.TransientModel):
     re_export = fields.Boolean(
         string='Ré-export',
         help='Inclure les écritures déjà exportées.',
+        default=False,
+        groups='base.group_no_one',
     )
     export_file = fields.Binary(string='Fichier', readonly=True)
     export_filename = fields.Char(string='Nom du fichier', readonly=True)
