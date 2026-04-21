@@ -83,8 +83,11 @@ class SageExportWizard(models.TransientModel):
     def _get_libelle(self, line):
         """Construit le libellé Sage: type-N°FACTURE-NOM CLIENT."""
         move = line.move_id
-        # Type de pièce
-        if move.move_type == 'out_refund':
+        # Facture POS: origin rempli + journal vente locale
+        is_pos = bool(move.invoice_origin) and move.move_type == 'out_invoice' and not move.invoice_origin.startswith('BC')
+        if is_pos:
+            prefix = 'fact-pdv'
+        elif move.move_type == 'out_refund':
             prefix = 'avoir'
         elif move.move_type == 'in_refund':
             prefix = 'avoir-f'
@@ -94,7 +97,7 @@ class SageExportWizard(models.TransientModel):
             prefix = 'fact'
         # Nom client/fournisseur
         partner_name = (move.partner_id.name or '').replace(';', ' ')
-        # Libellé: fact-G264398-NOVOTEL
+        # Libellé: fact-G264398-NOVOTEL ou fact-pdv-VL/26-27/22540
         return '%s-%s-%s' % (prefix, move.name or '', partner_name)
 
     def _format_line(self, line):
