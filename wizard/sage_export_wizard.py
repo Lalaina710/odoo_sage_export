@@ -83,22 +83,15 @@ class SageExportWizard(models.TransientModel):
         return ''
 
     def _get_libelle(self, line):
-        """Utilise le champ Référence (ref) de la pièce comptable comme libellé Sage."""
+        """Libellé Sage = nom du tiers (partner). Tronqué à 35 chars (limite Sage 100c)."""
         move = line.move_id
-        ref = (move.ref or '').replace(';', ' ')
-        if ref:
-            return ref
-        # Fallback si ref vide: type-N°FACTURE-NOM CLIENT
-        if move.move_type == 'out_refund':
-            prefix = 'avoir'
-        elif move.move_type == 'in_refund':
-            prefix = 'avoir-f'
-        elif move.move_type == 'in_invoice':
-            prefix = 'fact-f'
+        partner = line.partner_id or move.partner_id
+        if partner and partner.name:
+            libelle = partner.name
         else:
-            prefix = 'fact'
-        partner_name = (move.partner_id.name or '').replace(';', ' ')
-        return '%s-%s-%s' % (prefix, move.name or '', partner_name)
+            libelle = move.name or ''
+        libelle = libelle.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
+        return libelle[:35]
 
     def _get_numero_facture(self, line):
         """Numéro facture pour la 9e colonne Sage 100c.
