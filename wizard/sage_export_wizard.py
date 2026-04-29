@@ -100,22 +100,71 @@ class SageExportWizard(models.TransientModel):
         partner_name = (move.partner_id.name or '').replace(';', ' ')
         return '%s-%s-%s' % (prefix, move.name or '', partner_name)
 
+    def _get_numero_facture(self, line):
+        """Numéro facture pour la 9e colonne Sage 100c.
+
+        Renseigné uniquement pour les factures et avoirs (clients/fournisseurs),
+        vide pour les autres écritures (OD, banque, etc.).
+        """
+        move = line.move_id
+        if move.move_type in ('out_invoice', 'in_invoice', 'out_refund', 'in_refund'):
+            return (move.name or '').replace(';', ' ')
+        return ''
+
     def _format_line(self, line):
-        """Format a single account.move.line as a Sage-compatible row."""
+        """Format a single account.move.line as a Sage 100c-compatible row.
+
+        9 colonnes (format strict Sage 100c) :
+        1. Code journal
+        2. Date pièce (JJ/MM/AAAA)
+        3. N° pièce
+        4. N° compte général
+        5. N° compte tiers (411*/401* uniquement)
+        6. Libellé écriture
+        7. Montant débit
+        8. Montant crédit
+        9. Numéro facture (uniquement pour factures/avoirs)
+        """
         move = line.move_id
         fields_list = [
-            move.journal_id.code or '',                # Code Journal
-            self._format_date(move.date),              # Date
-            move.name or '',                           # N° Pièce
-            line.account_id.code or '',                # Compte Général
-            self._get_compte_tiers(line),              # Compte Tiers
-            self._get_libelle(line),                   # Libellé
-            self._format_amount(line.debit),           # Débit
-            self._format_amount(line.credit),          # Crédit
-            (move.ref or '').replace(';', ' '),        # N° Référence
-            self._format_date(line.date_maturity),     # Date d'échéance
+            move.journal_id.code or '',                # 1. Code Journal
+            self._format_date(move.date),              # 2. Date pièce
+            move.name or '',                           # 3. N° Pièce
+            line.account_id.code or '',                # 4. Compte Général
+            self._get_compte_tiers(line),              # 5. Compte Tiers
+            self._get_libelle(line),                   # 6. Libellé
+            self._format_amount(line.debit),           # 7. Débit
+            self._format_amount(line.credit),          # 8. Crédit
+            self._get_numero_facture(line),            # 9. Numéro facture
         ]
         return ';'.join(fields_list)
+
+    def _is_line_exportable(self, line):
+        """Garde-fous Sage 100c : valide les champs obligatoires.
+
+        Retourne True si la ligne peut être exportée, False sinon (avec log warning).
+        Champs obligatoires Sage : code journal, code compte général, date pièce.
+        """
+        move = line.move_id
+        if not (move.journal_id and move.journal_id.code):
+            _logger.warning(
+                'Sage export: ligne %s ignoree - code journal manquant (move %s)',
+                line.id, move.name or move.id,
+            )
+            return False
+        if not (line.account_id and line.account_id.code):
+            _logger.warning(
+                'Sage export: ligne %s ignoree - code compte general manquant (move %s)',
+                line.id, move.name or move.id,
+            )
+            return False
+        if not move.date:
+            _logger.error(
+                'Sage export: ligne %s ignoree - date piece manquante (move %s)',
+                line.id, move.name or move.id,
+            )
+            return False
+        return True
 
     def action_export(self):
         """Generate the Sage export file (sans marquer les écritures)."""
@@ -124,10 +173,22 @@ class SageExportWizard(models.TransientModel):
         if not lines:
             raise UserError(_('Aucune écriture à exporter pour la période et les journaux sélectionnés.'))
 
-        # Generate file content
+        # Generate file content (skip lignes invalides - garde-fous Sage)
         rows = []
+        exported_lines = self.env['account.move.line']
+        skipped = 0
         for line in lines:
+            if not self._is_line_exportable(line):
+                skipped += 1
+                continue
             rows.append(self._format_line(line))
+            exported_lines |= line
+
+        if not rows:
+            raise UserError(_(
+                'Aucune ligne valide à exporter (toutes ignorées par les garde-fous Sage). '
+                'Consultez les logs pour le détail.'
+            ))
 
         content = '\r\n'.join(rows)
         # Encode in ISO-8859-1 (Latin-1) for Sage compatibility
@@ -139,7 +200,7 @@ class SageExportWizard(models.TransientModel):
             self.date_to.strftime('%Y%m%d'),
         )
 
-        moves = lines.mapped('move_id')
+        moves = exported_lines.mapped('move_id')
 
         # Write file to wizard — NE PAS marquer les écritures ici
         self.write({
@@ -150,8 +211,8 @@ class SageExportWizard(models.TransientModel):
         })
 
         _logger.info(
-            'Sage export genere: %d ecritures, %d lignes, periode %s-%s, user %s',
-            len(moves), len(lines), self.date_from, self.date_to,
+            'Sage export genere: %d ecritures, %d lignes (skipped %d), periode %s-%s, user %s',
+            len(moves), len(exported_lines), skipped, self.date_from, self.date_to,
             self.env.user.login,
         )
 

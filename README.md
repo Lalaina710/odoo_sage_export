@@ -12,26 +12,36 @@ Module Odoo 18 pour exporter les écritures comptables validées vers un fichier
 - Colonne **"Export Sage"** dans la liste des pièces comptables
 - Filtres de recherche : "Exporté vers Sage" / "Non exporté vers Sage"
 
-## Format du fichier
+## Format du fichier — Sage 100c (9 colonnes)
 
-| Colonne | Description | Exemple |
-|---------|-------------|---------|
-| Code Journal | Code du journal comptable | GR |
-| Date | Date de l'écriture | 02/04/2026 |
-| N° Pièce | Numéro de la pièce | FC260001 |
-| Compte Général | Numéro de compte | 411000 |
-| Compte Tiers | Référence partenaire (411/401 uniquement) | C00001 |
-| Libellé | Description de la ligne | Facture client X |
-| Débit | Montant débit | 1200,00 |
-| Crédit | Montant crédit | 0,00 |
-| Référence | Référence de la pièce | BL-2026-001 |
-| Date d'échéance | Échéance de paiement | 02/05/2026 |
+Format conforme à l'import standard "Écritures comptables" Sage 100c.
+
+| # | Colonne | Description | Source Odoo | Exemple |
+|---|---------|-------------|-------------|---------|
+| 1 | Code journal | Code du journal comptable | `move.journal_id.code` | VE |
+| 2 | Date de pièce | Date de l'écriture (JJ/MM/AAAA) | `move.date` | 02/04/2026 |
+| 3 | N° pièce | Numéro interne Odoo (regroupement) | `move.name` | FC260001 |
+| 4 | N° compte général | Numéro de compte (8 chiffres post-bascule TVA) | `line.account_id.code` | 41110000 |
+| 5 | N° compte tiers | Référence partenaire (411/401 uniquement) | `partner.ref` | C00001 |
+| 6 | Libellé écriture | Description (max ~35 char Sage) | `move.ref` ou fallback | Facture client X |
+| 7 | Montant débit | Montant débit | `line.debit` | 1200,00 |
+| 8 | Montant crédit | Montant crédit | `line.credit` | 0,00 |
+| 9 | Numéro facture | Réf commerciale lettrage (factures/avoirs uniquement) | `move.name` | FC260001 |
 
 **Spécifications techniques :**
 - Séparateur : point-virgule (`;`)
-- Encodage : ISO-8859-1 (Latin-1)
-- Format date : DD/MM/YYYY
+- Encodage : ISO-8859-1 (Latin-1) — Sage Windows ANSI/CP1252 compatible
+- Newline : Windows CRLF (`\r\n`)
+- Format date : JJ/MM/AAAA (DD/MM/YYYY)
 - Format montant : décimales avec virgule (`1200,00`)
+- Pas de header (colonnes implicites par position)
+- Pas de guillemets autour des champs
+- Les `;` dans les libellés sont remplacés par des espaces
+
+**Garde-fous (lignes ignorées avec log) :**
+- Code journal manquant → warning + skip
+- Code compte général manquant → warning + skip
+- Date pièce manquante → error + skip
 
 ## Installation
 
