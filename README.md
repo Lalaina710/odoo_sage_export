@@ -23,7 +23,7 @@ Format conforme à l'import standard "Écritures comptables" Sage 100c.
 | 3 | N° pièce | Numéro interne Odoo (regroupement) | `move.name` | FC260001 |
 | 4 | N° compte général | Numéro de compte (8 chiffres post-bascule TVA) | `line.account_id.code` | 41110000 |
 | 5 | N° compte tiers | Référence partenaire (411/401 uniquement) | `partner.ref` | C00001 |
-| 6 | Libellé écriture | Description (max ~35 char Sage) | `move.ref` ou fallback | Facture client X |
+| 6 | Libellé écriture | Nom du tiers tronqué à 35 chars (limite Sage 100c) | `line.partner_id.name` ou `move.partner_id.name`, fallback `move.name` | C11RES115 - SUSHI BOX |
 | 7 | Montant débit | Montant débit | `line.debit` | 1200,00 |
 | 8 | Montant crédit | Montant crédit | `line.credit` | 0,00 |
 | 9 | Numéro facture | Réf commerciale lettrage (factures/avoirs uniquement) | `move.name` | FC260001 |
