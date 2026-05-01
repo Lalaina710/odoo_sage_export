@@ -132,31 +132,27 @@ class SageExportWizard(models.TransientModel):
             return line.partner_id.ref
         return ''
 
-    def _get_libelle(self, line):
-        """Libellé Sage. Tronqué à 35 chars (limite Sage 100c).
+    def _get_code_journal(self, line):
+        """Code journal Sage pour la ligne.
 
-        Priorité :
-        1. Compte 51150000 (ESPECES A ENCAISSER) -> nom du journal EAE
-           (ex: "ESPECE A ENCAISSER"). Permet d'identifier rapidement la
-           contrepartie caisse intermediaire dans Sage.
-        2. Sinon nom du tiers (partner) si present
-        3. Sinon move.name
+        Force `EAE` (Especes A Encaisser) pour les lignes dont le compte
+        general est `51150000` : Odoo poste ces ecritures sur les journaux
+        de caisse PdV (CSE8, CSTOM, etc.) mais en Sage ces lignes doivent
+        atterrir dans le journal de centralisation `EAE`. Toutes les
+        autres lignes gardent `move.journal_id.code`.
         """
-        move = line.move_id
         if line.account_id and line.account_id.code == '51150000':
-            eae = self.env['account.journal'].search(
-                [('code', '=', 'EAE')], limit=1,
-            )
-            if eae and eae.name:
-                libelle = eae.name
-            else:
-                libelle = 'ESPECE A ENCAISSER'
+            return 'EAE'
+        return line.move_id.journal_id.code or ''
+
+    def _get_libelle(self, line):
+        """Libellé Sage = nom du tiers (partner). Tronqué à 35 chars (limite Sage 100c)."""
+        move = line.move_id
+        partner = line.partner_id or move.partner_id
+        if partner and partner.name:
+            libelle = partner.name
         else:
-            partner = line.partner_id or move.partner_id
-            if partner and partner.name:
-                libelle = partner.name
-            else:
-                libelle = move.name or ''
+            libelle = move.name or ''
         libelle = libelle.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
         return libelle[:35]
 
@@ -187,7 +183,7 @@ class SageExportWizard(models.TransientModel):
         """
         move = line.move_id
         fields_list = [
-            move.journal_id.code or '',                # 1. Code Journal
+            self._get_code_journal(line),              # 1. Code Journal
             self._format_date(move.date),              # 2. Date pièce
             move.name or '',                           # 3. N° Pièce
             self._get_compte_general(line),            # 4. Compte Général
