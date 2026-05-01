@@ -75,6 +75,56 @@ class SageExportWizard(models.TransientModel):
         """Format amount with comma decimal separator (French format)."""
         return '{:.2f}'.format(amount).replace('.', ',')
 
+    def _get_compte_general(self, line):
+        """Compte general Sage pour la ligne.
+
+        Priorite (Sage 8 chiffres) :
+
+        1. Ligne produit sur facture vente/achat -> compte de la **categorie
+           du produit** :
+             - out_invoice / out_refund -> property_account_income_categ_id
+             - in_invoice  / in_refund  -> property_account_expense_categ_id
+        2. Ligne tiers (compte 411* ou 401* sur l'AML) -> compte du
+           **partner** :
+             - 411* -> partner.property_account_receivable_id
+             - 401* -> partner.property_account_payable_id
+           Corrige les AML obsoletes pointant des comptes 6 chiffres
+           heritees des imports Sage (ex: 401100 -> 40110000).
+        3. Fallback line.account_id.code (TVA, OD, banque, payments).
+
+        Tous les fallbacks restent toleres : si la categ ou le partner
+        n'a pas de property compte definie, on garde l'AML actuel.
+        """
+        move = line.move_id
+
+        # 1. Ligne produit -> categorie produit
+        if line.product_id and move.move_type in (
+            'out_invoice', 'out_refund', 'in_invoice', 'in_refund',
+        ):
+            categ = line.product_id.categ_id
+            if move.move_type in ('out_invoice', 'out_refund'):
+                acc = categ.property_account_income_categ_id
+            else:
+                acc = categ.property_account_expense_categ_id
+            if acc and acc.code:
+                return acc.code
+
+        # 2. Ligne tiers -> partner property
+        aml_code = line.account_id.code or ''
+        if line.partner_id and aml_code:
+            partner = line.partner_id
+            if aml_code.startswith('411'):
+                new = partner.property_account_receivable_id.code
+                if new:
+                    return new
+            elif aml_code.startswith('401'):
+                new = partner.property_account_payable_id.code
+                if new:
+                    return new
+
+        # 3. Fallback
+        return aml_code
+
     def _get_compte_tiers(self, line):
         """Return partner ref if account is client (411) or supplier (401)."""
         account_code = line.account_id.code or ''
@@ -123,7 +173,7 @@ class SageExportWizard(models.TransientModel):
             move.journal_id.code or '',                # 1. Code Journal
             self._format_date(move.date),              # 2. Date pièce
             move.name or '',                           # 3. N° Pièce
-            line.account_id.code or '',                # 4. Compte Général
+            self._get_compte_general(line),            # 4. Compte Général
             self._get_compte_tiers(line),              # 5. Compte Tiers
             self._get_libelle(line),                   # 6. Libellé
             self._format_amount(line.debit),           # 7. Débit
@@ -145,7 +195,7 @@ class SageExportWizard(models.TransientModel):
                 line.id, move.name or move.id,
             )
             return False
-        if not (line.account_id and line.account_id.code):
+        if not self._get_compte_general(line):
             _logger.warning(
                 'Sage export: ligne %s ignoree - code compte general manquant (move %s)',
                 line.id, move.name or move.id,
