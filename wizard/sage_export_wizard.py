@@ -132,27 +132,52 @@ class SageExportWizard(models.TransientModel):
             return line.partner_id.ref
         return ''
 
+    def _move_has_eae(self, move):
+        """True si le move contient au moins une ligne sur compte 51150000.
+        Toutes les lignes d'un meme move doivent alors etre routees vers
+        le journal EAE cote Sage (debit + contrepartie credit)."""
+        return any(
+            aml.account_id and aml.account_id.code == '51150000'
+            for aml in move.line_ids
+        )
+
+    def _eae_journal_name(self):
+        """Nom du journal EAE (ex 'ESPECE A ENCAISSER'), avec fallback."""
+        eae = self.env['account.journal'].search(
+            [('code', '=', 'EAE')], limit=1,
+        )
+        return eae.name if (eae and eae.name) else 'ESPECE A ENCAISSER'
+
     def _get_code_journal(self, line):
         """Code journal Sage pour la ligne.
 
-        Force `EAE` (Especes A Encaisser) pour les lignes dont le compte
-        general est `51150000` : Odoo poste ces ecritures sur les journaux
-        de caisse PdV (CSE8, CSTOM, etc.) mais en Sage ces lignes doivent
-        atterrir dans le journal de centralisation `EAE`. Toutes les
-        autres lignes gardent `move.journal_id.code`.
+        Si le move contient une ligne sur compte `51150000` (ESPECES A
+        ENCAISSER), force `EAE` pour TOUTES les lignes du move : Odoo poste
+        ces ecritures sur les journaux de caisse PdV (CSE8, CSTOM, CSSY,
+        etc.) mais en Sage la piece complete (debit caisse + credit tiers)
+        doit atterrir dans le journal de centralisation `EAE`.
         """
-        if line.account_id and line.account_id.code == '51150000':
+        if self._move_has_eae(line.move_id):
             return 'EAE'
         return line.move_id.journal_id.code or ''
 
     def _get_libelle(self, line):
-        """Libellé Sage = nom du tiers (partner). Tronqué à 35 chars (limite Sage 100c)."""
+        """Libellé Sage. Tronqué à 35 chars (limite Sage 100c).
+
+        Si le move contient une ligne 51150000, libelle de toutes les
+        lignes du move = nom du journal EAE (ex 'ESPECE A ENCAISSER'),
+        coherent avec le routage colonne 1.
+        Sinon: nom du tiers (partner) ou move.name.
+        """
         move = line.move_id
-        partner = line.partner_id or move.partner_id
-        if partner and partner.name:
-            libelle = partner.name
+        if self._move_has_eae(move):
+            libelle = self._eae_journal_name()
         else:
-            libelle = move.name or ''
+            partner = line.partner_id or move.partner_id
+            if partner and partner.name:
+                libelle = partner.name
+            else:
+                libelle = move.name or ''
         libelle = libelle.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
         return libelle[:35]
 
