@@ -218,18 +218,15 @@ class SageExportWizard(models.TransientModel):
 
         Priorité :
         1. Move avec ligne 51150000 → nom journal EAE (ex 'ESPECE A ENCAISSER').
-        2. Ligne tier (411*/401*) → nom client/fournisseur :
-             - partner.name de la ligne, sinon
-             - default_partner du PdV (clôture POS sans partner sur AML),
-             - sinon nom PdV / move.name.
-        3. Autres lignes (TVA, ventes, etc.) :
-             - clôture POS → nom PdV (config.name),
-             - sinon partner.name ou move.name.
+        2. Toutes lignes (tier ou non) → partner.name au format `ref - nom` :
+             - partner sur AML, sinon partner sur move,
+             - fallback default_partner du PdV (clôture POS anonyme).
+        3. Si pas de partner trouvé → nom PdV (config.name) → move.name.
         """
         move = line.move_id
         if self._move_has_eae(move):
             libelle = self._eae_journal_name()
-        elif self._is_tier_account(line):
+        else:
             partner = line.partner_id or move.partner_id
             if not partner:
                 session = self._get_pos_session_for_move(move)
@@ -240,27 +237,21 @@ class SageExportWizard(models.TransientModel):
             else:
                 session = self._get_pos_session_for_move(move)
                 libelle = (session.config_id.name if session and session.config_id else move.name) or ''
-        else:
-            session = self._get_pos_session_for_move(move)
-            if session and session.config_id and session.config_id.name:
-                libelle = session.config_id.name
-            else:
-                partner = line.partner_id or move.partner_id
-                if partner and partner.name:
-                    libelle = partner.name
-                else:
-                    libelle = move.name or ''
         libelle = libelle.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
         return libelle[:35]
 
     def _get_numero_facture(self, line):
         """Numéro facture pour la 9e colonne Sage 100c.
 
-        Renseigné uniquement pour les factures et avoirs (clients/fournisseurs),
-        vide pour les autres écritures (OD, banque, etc.).
+        Renseigné pour :
+        - factures et avoirs clients/fournisseurs (out/in_invoice/refund),
+        - clôtures POS (pos_session.move_id) — alignées sur ventes normales.
+        Vide pour les autres écritures (OD, banque, paiements simples).
         """
         move = line.move_id
         if move.move_type in ('out_invoice', 'in_invoice', 'out_refund', 'in_refund'):
+            return (move.name or '').replace(';', ' ')
+        if self._get_pos_session_for_move(move):
             return (move.name or '').replace(';', ' ')
         return ''
 
@@ -296,25 +287,25 @@ class SageExportWizard(models.TransientModel):
 
     def _group_lines(self, lines):
         """Regrouper AML par (move, journal Sage, compte general, compte tiers,
-        aml.name OU partner pour tiers, side D/C) — somme debit/credit.
+        side D/C) — somme debit/credit. Fusion globale TOUS comptes.
 
-        - Lignes tier (411*/401*) : clé fusionne par partner (ignore aml.name)
-          → un client = une seule ligne synthétisée par move/compte/sens,
-          peu importe la méthode de paiement. Ex Comptoir TPE+Espèces=1 ligne.
-        - Autres lignes (TVA, ventes, banque) : clé inclut aml.name pour
-          préserver les libellés distincts ('20% G', 'Ventes avec 20% G').
+        Sur un même move, lignes ayant même compte général / même compte
+        tiers / même sens fusionnent en 1 ligne unique, peu importe
+        `aml.name`. Cas couverts :
+        - 411/401 : Comptoir TPE+Espèces → 1 ligne (ex APYIIII 3→1).
+        - 70xxx/44xxx : 2 lignes même compte avec aml.name distincts
+          ('20% G' + 'Ventes avec 20% G') → 1 ligne synthétisée.
+        - Comptes différents (70710000 vs 70722000) restent séparés (la
+          clé inclut le compte général).
         """
         groups = {}
         order = []
         for aml in lines:
-            is_tier = self._is_tier_account(aml)
-            key_name = '' if is_tier else (aml.name or '').strip()
             key = (
                 aml.move_id.id,
                 self._get_code_journal(aml),
                 self._get_compte_general(aml),
                 self._get_compte_tiers(aml),
-                key_name,
                 'D' if aml.debit > 0 else 'C',
             )
             if key not in groups:
