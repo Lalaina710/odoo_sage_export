@@ -1,12 +1,12 @@
 {
     'name': 'Export Comptable vers Sage 100c',
-    'version': '18.0.1.2.4',
+    'version': '18.0.1.3.5',
     'category': 'Accounting',
     'summary': 'Export des écritures comptables au format Sage 100c',
     'description': 'Exporte les écritures comptables validées vers un fichier texte importable dans Sage 100c Cloud V8.',
     'author': 'Lalaina710',
     'license': 'LGPL-3',
-    'depends': ['account'],
+    'depends': ['account', 'point_of_sale'],
     'data': [
         'security/ir.model.access.csv',
         'views/account_move_views.xml',
