@@ -1,6 +1,6 @@
 # Export Comptable Odoo → Sage 100c (Odoo 18)
 
-**Version : 18.0.1.3.12**
+**Version : 18.0.1.3.16** — dernière modification 2026-05-22
 
 Module Odoo 18 pour exporter les écritures comptables validées vers un fichier importable dans Sage 100c Cloud V8. Couvre les ventes normales, les achats fournisseurs et les **clôtures de session Point de Vente** (journal séparé `VEP` pour distinguer les tickets POS des ventes facturées).
 
@@ -79,6 +79,7 @@ Pour éviter la multiplication des lignes par compte, les AML d'une même pièce
 
 ### Spécifications techniques
 
+- Format fichier : **CSV `.txt`** (pas XLSX) — import natif Sage 100c
 - Séparateur : point-virgule (`;`)
 - Encodage : ISO-8859-1 (Latin-1) — Sage Windows ANSI/CP1252 compatible
 - Newline : Windows CRLF (`\r\n`)
@@ -193,6 +194,10 @@ Menu : **Comptabilité → Export vers Sage**
 
 | Version | Changement |
 |---------|------------|
+| **18.0.1.3.16** | Fix col F : libellé miroir col E via méthode factorisée `_resolve_tiers_partner` (résout régression v1.3.15). Col F = `partner.ref + " - " + partner.name` cohérent avec col E, fallback identique (line.partner → move.partner → POS default_partner). |
+| **18.0.1.3.15** | Régression : col F basculée vers libellé tiers direct sans factorisation → désaccord col E/F sur clôtures POS. Corrigée par v1.3.16. |
+| **18.0.1.3.14** | Filter affiné classe 9 : exclusion **ciblée des lignes** `9*` + paire correspondante `5*` (au lieu d'exclure le `account.move` entier). Préserve les pièces mixtes contenant ventes 70xxx + engagements 9xxx. |
+| **18.0.1.3.13** | Itération interne — voir v1.3.14. |
 | **18.0.1.3.12** | Filter : exclure comptes classe 9 (`9*`) de l'export Sage (analytique / engagements non transférés Sage 100c SOPROMER). Domaine `_get_move_lines` : `('account_id.code', 'not like', '9%')`. |
 | **18.0.1.3.11** | Fix : `_get_pos_session_for_move` étendue à `bank_statement_line.pos_session_id` (cash POS → EAE) + `account.payment.pos_session_id` (TPE/carte POS → BNK1). Résout 564 lignes AML 411xxx export Sage sans compte tiers (44% des 411). Diag : `sopromer-rapports/04_compta_clients/diag_export_sage_tiers_manquants_220526.html`. |
 | **18.0.1.3.8** | Col 9 (numéro facture) étendue aux clôtures POS via `move.name` pour `pos_session.move_id`. |
