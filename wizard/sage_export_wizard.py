@@ -327,7 +327,7 @@ class SageExportWizard(models.TransientModel):
             move.name or '',                           # 3. N° Pièce
             self._get_compte_general(line),            # 4. Compte Général
             self._get_compte_tiers(line),              # 5. Compte Tiers
-            self._get_libelle(line),                   # 6. Libellé
+            (line.partner_id.name or '')[:35].replace(';', ' ').replace('\r', ' ').replace('\n', ' '),  # 6. Libellé tiers (v1.3.15)
             self._format_amount(line.debit if debit is None else debit),
             self._format_amount(line.credit if credit is None else credit),
             self._get_numero_facture(line),            # 9. Numéro facture
