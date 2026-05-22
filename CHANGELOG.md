@@ -1,3 +1,7 @@
+## v18.0.1.3.16 (2026-05-22)
+- Fix: col F libellé tiers = miroir col E avec fallback session POS pour AML anonymes.
+- v1.3.15 cassait POS (partner_id NULL → col F vide pour 34/34 AML cash mai).
+
 ## v18.0.1.3.15 (2026-05-22)
 - Col F (6) du XLSX = libellé tiers (partner.name) au lieu de l'ancien contenu.
 

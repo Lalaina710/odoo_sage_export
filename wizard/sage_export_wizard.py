@@ -177,6 +177,20 @@ class SageExportWizard(models.TransientModel):
         # 3. Fallback
         return aml_code
 
+    def _resolve_tiers_partner(self, line):
+        """Résout le partner tiers pour une AML (DRY pour col E + col F).
+
+        Ordre : line.partner_id -> move.partner_id -> default_partner
+        de la pos.config (clôtures POS / cash anonyme / TPE).
+        Retourne un recordset (vide ou 1 partner).
+        """
+        partner = line.partner_id or line.move_id.partner_id
+        if not partner:
+            session = self._get_pos_session_for_move(line.move_id)
+            if session and session.config_id:
+                partner = session.config_id.default_partner_id
+        return partner or self.env['res.partner']
+
     def _get_compte_tiers(self, line):
         """Return partner ref if account is client (411) or supplier (401).
 
@@ -186,14 +200,25 @@ class SageExportWizard(models.TransientModel):
         account_code = line.account_id.code or ''
         if not account_code.startswith(('411', '401')):
             return ''
-        partner = line.partner_id or line.move_id.partner_id
-        if not partner:
-            session = self._get_pos_session_for_move(line.move_id)
-            if session and session.config_id:
-                partner = session.config_id.default_partner_id
-        if partner and partner.ref:
-            return partner.ref
-        return ''
+        partner = self._resolve_tiers_partner(line)
+        return partner.ref or ''
+
+    def _get_libelle_tiers(self, line):
+        """Libellé tiers (col F) — miroir de _get_compte_tiers (col E).
+
+        Retourne `.name` du même partner résolu pour la col E, avec le
+        même fallback session POS (cash / TPE anonyme). Strippe les
+        caractères CSV (`;`, `\\r`, `\\n`) et tronque à 35 chars
+        (limite Sage 100c).
+
+        v1.3.16 : remplace la lecture directe `line.partner_id.name`
+        introduite en v1.3.15 qui retournait vide pour 34/34 AML cash
+        POS mai (partner_id NULL natif POS).
+        """
+        partner = self._resolve_tiers_partner(line)
+        name = (partner.name or '') if partner else ''
+        name = name.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
+        return name[:35]
 
     def _move_has_eae(self, move):
         """True si le move contient au moins une ligne sur compte 51150000.
@@ -327,7 +352,7 @@ class SageExportWizard(models.TransientModel):
             move.name or '',                           # 3. N° Pièce
             self._get_compte_general(line),            # 4. Compte Général
             self._get_compte_tiers(line),              # 5. Compte Tiers
-            (line.partner_id.name or '')[:35].replace(';', ' ').replace('\r', ' ').replace('\n', ' '),  # 6. Libellé tiers (v1.3.15)
+            self._get_libelle_tiers(line),             # 6. Libellé tiers (v1.3.16)
             self._format_amount(line.debit if debit is None else debit),
             self._format_amount(line.credit if credit is None else credit),
             self._get_numero_facture(line),            # 9. Numéro facture
