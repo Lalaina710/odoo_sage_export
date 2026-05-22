@@ -57,6 +57,7 @@ class SageExportWizard(models.TransientModel):
             ('date', '>=', self.date_from),
             ('date', '<=', self.date_to),
             ('company_id', '=', self.env.company.id),
+            ('account_id.code', 'not like', '9%'),  # Exclure classe 9 (analytique/engagements)
         ]
         if self.journal_ids:
             domain.append(('journal_id', 'in', self.journal_ids.ids))
