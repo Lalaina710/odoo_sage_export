@@ -52,17 +52,31 @@ class SageExportWizard(models.TransientModel):
     def _get_move_lines(self):
         """Retrieve account.move.lines to export."""
         self.ensure_one()
-        domain = [
+        # Filtres de base (période / journal / company / état) — réutilisés
+        # pour borner le scan des moves classe 9.
+        base_domain = [
             ('move_id.state', '=', 'posted'),
             ('date', '>=', self.date_from),
             ('date', '<=', self.date_to),
             ('company_id', '=', self.env.company.id),
-            ('account_id.code', 'not like', '9%'),  # Exclure classe 9 (analytique/engagements)
         ]
         if self.journal_ids:
-            domain.append(('journal_id', 'in', self.journal_ids.ids))
+            base_domain.append(('journal_id', 'in', self.journal_ids.ids))
+
+        # v1.3.13: exclure l'ECRITURE COMPLETE si elle contient au moins une
+        # ligne classe 9. v1.3.12 filtrait seulement les lignes 9* ce qui
+        # laissait la contre-partie 6xxx/7xxx seule => XLSX deséquilibré,
+        # refus import Sage.
+        moves_with_class9 = self.env['account.move.line'].search(
+            base_domain + [('account_id.code', '=like', '9%')],
+        ).move_id.ids
+
+        domain = list(base_domain)
         if not self.re_export:
             domain.append(('move_id.sage_exported', '=', False))
+
+        if moves_with_class9:
+            domain.append(('move_id', 'not in', moves_with_class9))
 
         if self.exclude_pos_tickets:
             ticket_move_ids = self._get_pos_ticket_move_ids()
