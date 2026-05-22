@@ -201,12 +201,37 @@ class SageExportWizard(models.TransientModel):
         return line.move_id.journal_id.code or ''
 
     def _get_pos_session_for_move(self, move):
-        """Retourne pos.session si move est une clôture POS, sinon False."""
+        """Retourne pos.session si move est lié à une session POS, sinon False.
+
+        Chemins testés par ordre de priorité :
+        1. move.pos_session_ids (champ inverse natif si présent).
+        2. pos.session.move_id = move (clôture POS classique facturée).
+        3. account.bank.statement.line.pos_session_id (cash POS → EAE).
+        4. account.payment.pos_session_id (TPE/carte POS → BNK1).
+        """
+        # 1. Champ inverse natif
         if 'pos_session_ids' in move._fields:
             sessions = move.pos_session_ids
             if sessions:
                 return sessions[:1]
-        return self.env['pos.session'].search([('move_id', '=', move.id)], limit=1)
+        # 2. Clôture POS classique
+        session = self.env['pos.session'].search([('move_id', '=', move.id)], limit=1)
+        if session:
+            return session
+        # 3. Cash POS via account.bank.statement.line
+        if 'statement_line_ids' in move._fields and move.statement_line_ids:
+            stmt_lines = move.statement_line_ids.filtered(
+                lambda s: 'pos_session_id' in s._fields and s.pos_session_id
+            )
+            if stmt_lines:
+                return stmt_lines[:1].pos_session_id
+        # 4. TPE/carte POS via account.payment
+        Payment = self.env['account.payment']
+        if 'pos_session_id' in Payment._fields:
+            payment = Payment.search([('move_id', '=', move.id)], limit=1)
+            if payment and payment.pos_session_id:
+                return payment.pos_session_id
+        return self.env['pos.session']
 
     def _is_tier_account(self, line):
         """True si la ligne est sur compte tiers (411*/401*)."""

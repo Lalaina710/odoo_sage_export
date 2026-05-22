@@ -1,6 +1,6 @@
 # Export Comptable Odoo → Sage 100c (Odoo 18)
 
-**Version : 18.0.1.3.8**
+**Version : 18.0.1.3.11**
 
 Module Odoo 18 pour exporter les écritures comptables validées vers un fichier importable dans Sage 100c Cloud V8. Couvre les ventes normales, les achats fournisseurs et les **clôtures de session Point de Vente** (journal séparé `VEP` pour distinguer les tickets POS des ventes facturées).
 
@@ -193,6 +193,7 @@ Menu : **Comptabilité → Export vers Sage**
 
 | Version | Changement |
 |---------|------------|
+| **18.0.1.3.11** | Fix : `_get_pos_session_for_move` étendue à `bank_statement_line.pos_session_id` (cash POS → EAE) + `account.payment.pos_session_id` (TPE/carte POS → BNK1). Résout 564 lignes AML 411xxx export Sage sans compte tiers (44% des 411). Diag : `sopromer-rapports/04_compta_clients/diag_export_sage_tiers_manquants_220526.html`. |
 | **18.0.1.3.8** | Col 9 (numéro facture) étendue aux clôtures POS via `move.name` pour `pos_session.move_id`. |
 | **18.0.1.3.7** | Libellé col 6 unifié `ref - nom partner` partout (TVA, ventes, 411, achats), fallback `default_partner` PdV pour clôtures POS anonymes. |
 | **18.0.1.3.6** | Groupement étendu à TOUS les comptes (clé sans `aml.name`) : APYIIII 3 lignes 411 → 1 ligne ; ventes 70xxx multi-aml.name → 1 ligne. |
