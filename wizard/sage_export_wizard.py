@@ -63,20 +63,18 @@ class SageExportWizard(models.TransientModel):
         if self.journal_ids:
             base_domain.append(('journal_id', 'in', self.journal_ids.ids))
 
-        # v1.3.13: exclure l'ECRITURE COMPLETE si elle contient au moins une
-        # ligne classe 9. v1.3.12 filtrait seulement les lignes 9* ce qui
-        # laissait la contre-partie 6xxx/7xxx seule => XLSX deséquilibré,
-        # refus import Sage.
-        moves_with_class9 = self.env['account.move.line'].search(
+        # v1.3.14: retirer UNIQUEMENT les lignes 9* + leur contre-partie 5*
+        # dans le MEME move. Cible reelle = paires ecarts caisse
+        # (999001/999002 <-> 51150000). v1.3.13 excluait tout le move des
+        # qu'une ligne 9* etait presente -> perdait les lignes tiers (411),
+        # charges (6xxx) et produits (7xxx) sur ecritures mixtes.
+        moves_with_class9_ids = set(self.env['account.move.line'].search(
             base_domain + [('account_id.code', '=like', '9%')],
-        ).move_id.ids
+        ).mapped('move_id.id'))
 
         domain = list(base_domain)
         if not self.re_export:
             domain.append(('move_id.sage_exported', '=', False))
-
-        if moves_with_class9:
-            domain.append(('move_id', 'not in', moves_with_class9))
 
         if self.exclude_pos_tickets:
             ticket_move_ids = self._get_pos_ticket_move_ids()
@@ -87,7 +85,18 @@ class SageExportWizard(models.TransientModel):
             domain,
             order='journal_id, date, move_id',
         )
-        return lines
+
+        # Filtre par ligne (pas par move) : seules les lignes 9* et leur
+        # contre-partie 5* sur un move classe 9 sont retirees.
+        def _keep(aml):
+            code = aml.account_id.code or ''
+            if code.startswith('9'):
+                return False
+            if code.startswith('5') and aml.move_id.id in moves_with_class9_ids:
+                return False
+            return True
+
+        return lines.filtered(_keep)
 
     def _get_pos_ticket_move_ids(self):
         """IDs des account.move correspondant aux factures par ticket POS.
