@@ -7,6 +7,19 @@ from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
+# Longueur des zones libellé Sage 100c (col 6).
+MAX_LEN_LIBELLE = 35
+# Nombre max de valeurs détaillées dans un warning d'audit.
+AUDIT_LOG_SAMPLE = 50
+
+
+def _sample(values, limit=AUDIT_LOG_SAMPLE):
+    """Formate une liste pour un log : N premières valeurs + reste compté."""
+    head = ', '.join(values[:limit])
+    if len(values) > limit:
+        return '%s ... (+%d)' % (head, len(values) - limit)
+    return head
+
 
 class SageExportWizard(models.TransientModel):
     _name = 'sage.export.wizard'
@@ -127,6 +140,16 @@ class SageExportWizard(models.TransientModel):
         """Format amount with comma decimal separator (French format)."""
         return '{:.2f}'.format(amount).replace('.', ',')
 
+    def _clean_csv_value(self, value):
+        """Neutralise les caractères incompatibles avec le CSV Sage 100c.
+
+        Le fichier est un CSV `;` en ISO-8859-1 sans guillemets : un `;`
+        ou un saut de ligne dans une valeur décalerait toutes les colonnes
+        suivantes. Ils sont remplacés par un espace, puis la valeur est
+        strippée.
+        """
+        return (value or '').replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
+
     def _get_compte_general(self, line):
         """Compte general Sage pour la ligne.
 
@@ -217,8 +240,7 @@ class SageExportWizard(models.TransientModel):
         """
         partner = self._resolve_tiers_partner(line)
         name = (partner.name or '') if partner else ''
-        name = name.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
-        return name[:35]
+        return self._clean_csv_value(name)[:MAX_LEN_LIBELLE]
 
     def _move_has_eae(self, move):
         """True si le move contient au moins une ligne sur compte 51150000.
@@ -228,13 +250,6 @@ class SageExportWizard(models.TransientModel):
             aml.account_id and aml.account_id.code == '51150000'
             for aml in move.line_ids
         )
-
-    def _eae_journal_name(self):
-        """Nom du journal EAE (ex 'ESPECE A ENCAISSER'), avec fallback."""
-        eae = self.env['account.journal'].search(
-            [('code', '=', 'EAE')], limit=1,
-        )
-        return eae.name if (eae and eae.name) else 'ESPECE A ENCAISSER'
 
     def _get_code_journal(self, line):
         """Code journal Sage pour la ligne.
@@ -282,37 +297,117 @@ class SageExportWizard(models.TransientModel):
                 return payment.pos_session_id
         return self.env['pos.session']
 
-    def _is_tier_account(self, line):
-        """True si la ligne est sur compte tiers (411*/401*)."""
-        code = self._get_compte_general(line) or ''
-        return code.startswith(('411', '401'))
+    def _get_numero_piece(self, line):
+        """N° pièce Sage 100c (3e colonne).
 
-    def _get_libelle(self, line):
-        """Libellé Sage. Tronqué à 35 chars (limite Sage 100c).
+        - **Journal achat uniquement** (`in_invoice` / `in_refund`) :
+          **référence fournisseur** (v1.4.0) au lieu du n° interne Odoo,
+          soit `move.ref` — le champ « Référence » de la facture
+          fournisseur, qu'Odoo pré-remplit avec le `partner_ref` du BC
+          (`purchase.order._prepare_invoice`). **Vide** si `move.ref` est
+          vide : pas de repli sur `move.name` (arbitrage client).
 
-        Priorité :
-        1. Move avec ligne 51150000 → nom journal EAE (ex 'ESPECE A ENCAISSER').
-        2. Toutes lignes (tier ou non) → partner.name au format `ref - nom` :
-             - partner sur AML, sinon partner sur move,
-             - fallback default_partner du PdV (clôture POS anonyme).
-        3. Si pas de partner trouvé → nom PdV (config.name) → move.name.
+          Conséquences assumées côté client — volontairement **non**
+          contournées ici :
+          * avoir d'extourne → `move.ref` contient le texte auto d'Odoo
+            (« Annulation de : BILL/..., motif ») ;
+          * facture multi-BC → `move.ref` est la concaténation des refs
+            (`purchase.order._create_invoices`) ;
+          * facture rattachée à un BC mais `ref` vidée à la main →
+            col 3 vide (aucune remontée au BC).
+
+        - Tous les autres cas (ventes, clôtures POS, OD, banques,
+          paiements) : `move.name`.
+
+        **Aucune troncature** (v1.4.1) : la prod 43 exporte `GRS/26-27/0047`
+        (14 caractères) en col 3 depuis des mois sans rejet ni fusion de
+        pièce à l'import — la zone « N° pièce » Sage n'est donc pas bornée
+        à 13. Seul le nettoyage CSV est appliqué.
+
+        Les anomalies (col 3 vide, collisions, encodage) sont journalisées
+        par `_audit_numero_piece` au moment de l'export.
         """
         move = line.move_id
-        if self._move_has_eae(move):
-            libelle = self._eae_journal_name()
-        else:
-            partner = line.partner_id or move.partner_id
-            if not partner:
-                session = self._get_pos_session_for_move(move)
-                if session and session.config_id:
-                    partner = session.config_id.default_partner_id
-            if partner and partner.name:
-                libelle = partner.name
+        if move.move_type in ('in_invoice', 'in_refund'):
+            return self._clean_csv_value(move.ref)
+        return self._clean_csv_value(move.name)
+
+    def _audit_numero_piece(self, lines):
+        """Journalise les anomalies col 3 (N° pièce) avant écriture fichier.
+
+        Trois contrôles, dans le style de `_is_line_exportable` (warning
+        + poursuite de l'export, la décision revient au comptable) :
+
+        - factures/avoirs d'**achat** sortant avec une col 3 **vide** :
+          elles partagent toutes le même n° de pièce vide côté Sage ;
+        - **collisions** (même journal Sage + date + col 3 sur deux moves
+          distincts) : Sage fusionne ces pièces à l'import. Cas nominal :
+          les avoirs d'extourne, dont la `ref` auto commence tous par
+          « Annulation de : » ;
+        - valeurs **non encodables en ISO-8859-1** (ex apostrophe
+          typographique U+2019 collée depuis Word/PDF) : le fichier est
+          écrit avec `errors='replace'`, ces caractères deviennent `?` et
+          deux réfs distinctes peuvent produire la même clé de pièce.
+
+        Les clés sont calculées sur la valeur **réellement écrite dans le
+        fichier** : `_get_numero_piece` est la seule source, et le
+        nettoyage appliqué à l'assemblage par `_format_line` est
+        idempotent — l'audit et le fichier voient donc la même chaîne.
+
+        Retourne un dict de compteurs pour le log de synthèse.
+        """
+        # Une seule ligne représentative par pièce : la col 3 ne dépend
+        # que du move.
+        reps = {}
+        for line in lines:
+            reps.setdefault(line.move_id.id, line)
+
+        empty, non_latin1, collisions = [], [], []
+        seen = {}
+        for line in reps.values():
+            move = line.move_id
+            value = self._get_numero_piece(line)
+            label = move.name or str(move.id)
+
+            if move.move_type in ('in_invoice', 'in_refund') and not value:
+                empty.append(label)
+
+            if not value:
+                continue
+            try:
+                value.encode('iso-8859-1')
+            except UnicodeEncodeError:
+                non_latin1.append('%s (%s)' % (label, value))
+            key = (self._get_code_journal(line), move.date, value)
+            if key in seen:
+                collisions.append('%s <-> %s (%s)' % (seen[key], label, value))
             else:
-                session = self._get_pos_session_for_move(move)
-                libelle = (session.config_id.name if session and session.config_id else move.name) or ''
-        libelle = libelle.replace(';', ' ').replace('\r', ' ').replace('\n', ' ').strip()
-        return libelle[:35]
+                seen[key] = label
+
+        if empty:
+            _logger.warning(
+                'Sage export: %d facture(s)/avoir(s) achat sans reference '
+                'fournisseur -> col 3 vide, pieces fusionnables a l import '
+                'Sage: %s', len(empty), _sample(empty),
+            )
+        if non_latin1:
+            _logger.warning(
+                'Sage export: %d n° de piece non encodable(s) en ISO-8859-1 '
+                '(caracteres remplaces par ? dans le fichier): %s',
+                len(non_latin1), _sample(non_latin1),
+            )
+        if collisions:
+            _logger.warning(
+                'Sage export: %d collision(s) de n° de piece (meme journal + '
+                'date + col 3) -> Sage fusionnera ces pieces: %s',
+                len(collisions), _sample(collisions),
+            )
+
+        return {
+            'empty': len(empty),
+            'non_latin1': len(non_latin1),
+            'collisions': len(collisions),
+        }
 
     def _get_numero_facture(self, line):
         """Numéro facture pour la 9e colonne Sage 100c.
@@ -321,6 +416,10 @@ class SageExportWizard(models.TransientModel):
         - factures et avoirs clients/fournisseurs (out/in_invoice/refund),
         - clôtures POS (pos_session.move_id) — alignées sur ventes normales.
         Vide pour les autres écritures (OD, banque, paiements simples).
+
+        Inchangé depuis v1.3.16 : la référence fournisseur demandée par le
+        client alimente la **col 3** (`_get_numero_piece`), pas cette
+        colonne.
         """
         move = line.move_id
         if move.move_type in ('out_invoice', 'in_invoice', 'out_refund', 'in_refund'):
@@ -335,7 +434,7 @@ class SageExportWizard(models.TransientModel):
         9 colonnes (format strict Sage 100c) :
         1. Code journal
         2. Date pièce (JJ/MM/AAAA)
-        3. N° pièce
+        3. N° pièce (achats : référence fournisseur, sinon move.name)
         4. N° compte général
         5. N° compte tiers (411*/401* uniquement)
         6. Libellé écriture
@@ -344,12 +443,19 @@ class SageExportWizard(models.TransientModel):
         9. Numéro facture (uniquement pour factures/avoirs)
 
         `debit` et `credit` overridables pour lignes groupées (somme).
+
+        v1.4.0 : **toutes** les colonnes passent par `_clean_csv_value`
+        avant assemblage. Les cols 1, 4, 5 et 9 ne l'étaient pas : un `;`
+        dans `res.partner.ref` (champ libre, col 5) produisait une ligne à
+        10 champs, décalant toutes les colonnes suivantes — les montants
+        atterrissaient dans la mauvaise zone Sage. Le nettoyage est
+        idempotent : les colonnes déjà nettoyées (3, 6) ne changent pas.
         """
         move = line.move_id
         fields_list = [
             self._get_code_journal(line),              # 1. Code Journal
             self._format_date(move.date),              # 2. Date pièce
-            move.name or '',                           # 3. N° Pièce
+            self._get_numero_piece(line),              # 3. N° Pièce (v1.4.0)
             self._get_compte_general(line),            # 4. Compte Général
             self._get_compte_tiers(line),              # 5. Compte Tiers
             self._get_libelle_tiers(line),             # 6. Libellé tiers (v1.3.16)
@@ -357,7 +463,7 @@ class SageExportWizard(models.TransientModel):
             self._format_amount(line.credit if credit is None else credit),
             self._get_numero_facture(line),            # 9. Numéro facture
         ]
-        return ';'.join(fields_list)
+        return ';'.join(self._clean_csv_value(value) for value in fields_list)
 
     def _group_lines(self, lines):
         """Regrouper AML par (move, journal Sage, compte general, compte tiers,
@@ -434,6 +540,10 @@ class SageExportWizard(models.TransientModel):
             valid_lines |= line
             exported_lines |= line
 
+        # Observabilité col 3 (N° pièce) : vides, troncatures, collisions,
+        # encodage. N'interrompt jamais l'export.
+        audit = self._audit_numero_piece(valid_lines)
+
         rows = []
         for grp in self._group_lines(valid_lines):
             rows.append(self._format_line(grp['rep'], debit=grp['debit'], credit=grp['credit']))
@@ -465,9 +575,11 @@ class SageExportWizard(models.TransientModel):
         })
 
         _logger.info(
-            'Sage export genere: %d ecritures, %d lignes (skipped %d), periode %s-%s, user %s',
+            'Sage export genere: %d ecritures, %d lignes (skipped %d), periode %s-%s, '
+            'user %s | col 3: %d vide(s), %d collision(s), %d non-latin1',
             len(moves), len(exported_lines), skipped, self.date_from, self.date_to,
-            self.env.user.login,
+            self.env.user.login, audit['empty'], audit['collisions'],
+            audit['non_latin1'],
         )
 
         return {
